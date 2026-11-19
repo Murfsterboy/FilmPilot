@@ -10,10 +10,17 @@ FAILED=0
 step()  { echo; echo "=== $*"; }
 fail()  { echo "FAIL: $*"; FAILED=1; }
 shot()  { adb exec-out screencap -p > "$OUT/$1.png" 2>/dev/null || true; }
+# UI dump, retried: with the live GPU preview running, the emulator's software renderer can
+# make uiautomator time out waiting for the UI to go idle.
 dump()  {
-  rm -f "$OUT/ui.xml"; adb shell rm -f /sdcard/ui.xml
-  local msg; msg=$(adb shell uiautomator dump /sdcard/ui.xml 2>&1 | tr -d '\r')
-  adb pull /sdcard/ui.xml "$OUT/ui.xml" >/dev/null 2>&1 || echo "uiautomator dump failed: $msg"
+  local msg i
+  for i in 1 2 3 4; do
+    rm -f "$OUT/ui.xml"; adb shell rm -f /sdcard/ui.xml
+    msg=$(adb shell uiautomator dump /sdcard/ui.xml 2>&1 | tr -d '\r')
+    adb pull /sdcard/ui.xml "$OUT/ui.xml" >/dev/null 2>&1 && return 0
+    sleep 2
+  done
+  echo "uiautomator dump failed: $msg"
 }
 diagnose() {
   echo "--- diagnostics: $1"
