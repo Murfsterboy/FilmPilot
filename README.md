@@ -20,7 +20,7 @@ The live preview is not processed yet; the look is applied to the saved photo. T
 ## Project layout
 
 ```
-filmpilot/
+FilmPilot/
 ├─ filmfx/                      Effects pipeline: pure Kotlin/JVM, no Android dependency
 │  └─ src/main/kotlin/com/filmpilot/fx/
 │     ├─ FilmPipeline.kt        per-pixel: exposure → LUT → vignette → grain (strip-able, thread-safe)
@@ -71,7 +71,7 @@ Check the phone is visible: `adb devices` should list it as `device` (not `unaut
 **Install**
 
 Option A: use the APK CI builds on every push. Download `FilmPilot.apk` from this repo's
-**Releases → filmpilot-latest** page, then:
+**Releases → latest** page, then:
 
 ```
 adb install -r FilmPilot.apk
@@ -80,7 +80,6 @@ adb install -r FilmPilot.apk
 Option B: build it yourself (Android Studio, or JDK 17 + Android SDK):
 
 ```
-cd filmpilot
 ./gradlew :app:installDebug          # builds and installs on the connected phone
 # or
 ./gradlew :app:assembleRelease
@@ -105,8 +104,8 @@ Handy while testing: `adb logcat -s FilmPilot AndroidRuntime` shows the app's lo
 FX_PREVIEW_DIR=/tmp/fx ./gradlew -PfxOnly :filmfx:test --tests '*PreviewRender*'
 ```
 
-CI (`.github/workflows/filmpilot.yml`) runs the effects tests, builds the release APK, publishes
-it as the `filmpilot-latest` release, then runs an emulator smoke test that shoots three frames
+CI (`.github/workflows/build.yml`) runs the effects tests, builds the release APK, publishes
+it as the `latest` release, then runs an emulator smoke test that shoots three frames
 with the emulated camera and checks they reach `Pictures/FilmPilot`.
 
 ## Later phases (planned)
