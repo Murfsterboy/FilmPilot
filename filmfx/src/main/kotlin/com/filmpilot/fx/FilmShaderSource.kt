@@ -11,7 +11,10 @@ package com.filmpilot.fx
  *  - `uTileOrigin` is the position of that texture inside the full image, which lets a large
  *    photo be developed in tiles while vignette and grain stay continuous across tiles.
  *    Row 0 of the texture is image row `uTileOrigin.y`.
- *  - The LUT is a 3D texture (`size³`, RGB16F, linear filtering) laid out like the `.cube` data.
+ *  - The LUT is a 3D texture (`size³`, RGB32F, NEAREST) laid out like the `.cube` data
+ *    (x = red, y = green, z = blue). Trilinear interpolation is done in the shader with
+ *    `texelFetch`, in the same order as [Lut3D.sample], so it needs no float-texture filtering
+ *    support and matches the CPU closely.
  *
  * Constants are injected from the Kotlin implementation, and `FilmUniforms` supplies the
  * uniform values.
@@ -58,6 +61,21 @@ float linearToSrgb(float c) {
     return c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055;
 }
 
+vec3 lutAt(int r, int g, int b) { return texelFetch(uLut, ivec3(r, g, b), 0).rgb; }
+
+// Lut3D.sample: trilinear, interpolating red, then green, then blue.
+vec3 sampleLut(vec3 c) {
+    float n = uLutSize - 1.0;
+    vec3 f = clamp((c - uLutMin) * uLutInvRange * n, 0.0, n);
+    ivec3 i = min(ivec3(f), ivec3(int(n) - 1));
+    vec3 d = f - vec3(i);
+    vec3 c00 = mix(lutAt(i.x, i.y, i.z),         lutAt(i.x + 1, i.y, i.z),         d.x);
+    vec3 c10 = mix(lutAt(i.x, i.y + 1, i.z),     lutAt(i.x + 1, i.y + 1, i.z),     d.x);
+    vec3 c01 = mix(lutAt(i.x, i.y, i.z + 1),     lutAt(i.x + 1, i.y, i.z + 1),     d.x);
+    vec3 c11 = mix(lutAt(i.x, i.y + 1, i.z + 1), lutAt(i.x + 1, i.y + 1, i.z + 1), d.x);
+    return mix(mix(c00, c10, d.y), mix(c01, c11, d.y), d.z);
+}
+
 // Noise.hash (lowbias32): identical 32-bit wrap-around arithmetic.
 uint hash(int x, int y, int seed) {
     uint h = (uint(x) * 0x27d4eb2du) ^ (uint(y) * 0x165667b1u) ^ (uint(seed) * 0x5bd1e995u);
@@ -96,12 +114,8 @@ void main() {
             linearToSrgb(srgbToLinear(rgb.b) * uExposureGain));
     }
 
-    // 2. Film LUT (trilinear via hardware filtering, sampling texel centres).
-    if (uUseLut) {
-        vec3 n = clamp((rgb - uLutMin) * uLutInvRange, 0.0, 1.0);
-        vec3 coord = (n * (uLutSize - 1.0) + 0.5) / uLutSize;
-        rgb = texture(uLut, coord).rgb;
-    }
+    // 2. Film LUT.
+    if (uUseLut) rgb = sampleLut(rgb);
 
     // 3. Vignette.
     if (uVignetteAmount > 0.0) {

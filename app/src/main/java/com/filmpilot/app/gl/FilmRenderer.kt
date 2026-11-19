@@ -15,7 +15,7 @@ class FilmRenderer {
     private val program = GlUtil.program(FilmShaderSource.VERTEX, FilmShaderSource.FRAGMENT)
     private val aPosition = GLES30.glGetAttribLocation(program, "aPosition")
     private val locations = HashMap<String, Int>()
-    private val lutTexture = GlUtil.texture(GLES30.GL_TEXTURE_3D, GLES30.GL_LINEAR)
+    private val lutTexture = GlUtil.texture(GLES30.GL_TEXTURE_3D, GLES30.GL_NEAREST)
     private var uploadedLut: Lut3D? = null
 
     private fun loc(name: String) = locations.getOrPut(name) { GLES30.glGetUniformLocation(program, name) }
@@ -69,7 +69,7 @@ class FilmRenderer {
         data.put(lut.data).position(0)
         GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 4)
         GLES30.glTexImage3D(
-            GLES30.GL_TEXTURE_3D, 0, GLES30.GL_RGB16F, lut.size, lut.size, lut.size, 0,
+            GLES30.GL_TEXTURE_3D, 0, GLES30.GL_RGB32F, lut.size, lut.size, lut.size, 0,
             GLES30.GL_RGB, GLES30.GL_FLOAT, data,
         )
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_WRAP_R, GLES30.GL_CLAMP_TO_EDGE)

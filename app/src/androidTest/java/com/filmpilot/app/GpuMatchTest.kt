@@ -52,7 +52,8 @@ class GpuMatchTest {
         return pixels(b)
     }
 
-    private fun compare(name: String, a: IntArray, b: IntArray) {
+    /** Returns null if they match, else a description (so every case gets reported). */
+    private fun compare(name: String, a: IntArray, b: IntArray): String? {
         var max = 0; var sum = 0L; var within2 = 0; val n = a.size * 3
         for (i in a.indices) for (shift in intArrayOf(16, 8, 0)) {
             val d = kotlin.math.abs(((a[i] shr shift) and 0xFF) - ((b[i] shr shift) and 0xFF))
@@ -60,21 +61,24 @@ class GpuMatchTest {
             sum += d
             if (d <= 2) within2++
         }
-        val stats = "$name: mean=%.3f max=%d within2=%.3f%%".format(sum.toDouble() / n, max, within2 * 100.0 / n)
+        val mid = a.size / 2 + 350
+        val stats = "$name: mean=%.3f max=%d within2=%.3f%% gpu[mid]=#%08x cpu[mid]=#%08x"
+            .format(sum.toDouble() / n, max, within2 * 100.0 / n, a[mid], b[mid])
         Log.i("FilmPilotTest", stats)
-        assertTrue(stats, within2.toDouble() / n >= 0.999)
-        assertTrue(stats, max <= 12)
+        return if (within2.toDouble() / n >= 0.999 && max <= 12) null else stats
     }
 
     @Test fun gpuMatchesCpuReference() {
         val src = chart()
         val cases = mapOf(
+            "passthrough" to FilmParams(null, grain = 0f, vignette = 0f),
             "lut-only" to FilmParams(lut, grain = 0f, vignette = 0f),
             "everything" to FilmParams(lut, exposureEv = 2f / 3f, grain = 0.6f, vignette = 0.5f, grainSeed = 42),
             "dark-heavy" to FilmParams(lut, exposureEv = -2f, grain = 1f, vignette = 1f, grainSeed = -7),
             "neutral" to FilmParams(null, exposureEv = 1f, grain = 0.3f, vignette = 0.2f, grainSeed = 123456789),
         )
-        for ((name, p) in cases) compare(name, gpu(src, p, tile = 256), cpu(src, p))
+        val failures = cases.mapNotNull { (name, p) -> compare(name, gpu(src, p, tile = 256), cpu(src, p)) }
+        assertTrue(failures.joinToString(" | "), failures.isEmpty())
     }
 
     @Test fun tilingIsInvisible() {
