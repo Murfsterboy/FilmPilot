@@ -10,7 +10,19 @@ FAILED=0
 step()  { echo; echo "=== $*"; }
 fail()  { echo "FAIL: $*"; FAILED=1; }
 shot()  { adb exec-out screencap -p > "$OUT/$1.png" 2>/dev/null || true; }
-dump()  { adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb pull /sdcard/ui.xml "$OUT/ui.xml" >/dev/null 2>&1; }
+dump()  {
+  rm -f "$OUT/ui.xml"; adb shell rm -f /sdcard/ui.xml
+  local msg; msg=$(adb shell uiautomator dump /sdcard/ui.xml 2>&1 | tr -d '\r')
+  adb pull /sdcard/ui.xml "$OUT/ui.xml" >/dev/null 2>&1 || echo "uiautomator dump failed: $msg"
+}
+diagnose() {
+  echo "--- diagnostics: $1"
+  adb shell dumpsys window 2>/dev/null | grep -E "mCurrentFocus|mFocusedApp" | head -3
+  [ -f "$OUT/ui.xml" ] && echo "ui nodes from $PKG: $(grep -o "package=\"$PKG\"" "$OUT/ui.xml" | wc -l)"
+  [ -f "$OUT/ui.xml" ] && grep -o 'content-desc="[^"]*"' "$OUT/ui.xml" | sort -u | head -20
+  adb logcat -d -s FilmPilot:V AndroidRuntime:E ActivityManager:E | tail -25
+  echo "---"
+}
 check_crash() {
   if adb logcat -d -b crash 2>/dev/null | grep -q "$PKG"; then
     fail "crash during: $1"; adb logcat -d -b crash | tail -60
@@ -21,7 +33,7 @@ tap_desc() {
   dump
   local node nums
   node=$(grep -o "<node [^>]*content-desc=\"$1[^\"]*\"[^>]*>" "$OUT/ui.xml" | head -1)
-  [ -z "$node" ] && { echo "no node with description '$1'"; return 1; }
+  [ -z "$node" ] && { echo "no node with description '$1'"; diagnose "looking for $1"; return 1; }
   nums=($(echo "$node" | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+'))
   adb shell input tap $(( (nums[0] + nums[2]) / 2 )) $(( (nums[1] + nums[3]) / 2 ))
 }
