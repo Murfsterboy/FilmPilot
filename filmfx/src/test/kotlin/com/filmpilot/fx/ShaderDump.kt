@@ -32,6 +32,9 @@ class ShaderDump {
         val lb = ByteBuffer.allocate(lut.data.size * 4).order(ByteOrder.LITTLE_ENDIAN)
         lut.data.forEach { lb.putFloat(it) }
         File(dir, "lut.f32").writeBytes(lb.array())
+        val nb = ByteBuffer.allocate(Noise.lattice.size * 4).order(ByteOrder.LITTLE_ENDIAN)
+        Noise.lattice.forEach { nb.putFloat(it) }
+        File(dir, "lattice.f32").writeBytes(nb.array())
 
         val json = StringBuilder("{\"width\":$w,\"height\":$h,\"lutSize\":${lut.size},\"cases\":{")
         cases.entries.forEachIndexed { i, (name, p) ->
@@ -43,7 +46,7 @@ class ShaderDump {
             json.append("\"$name\":{\"useLut\":${u.lut != null},\"useExposure\":${u.useExposure},")
                 .append("\"exposureGain\":${u.exposureGain},\"center\":[${u.centerX},${u.centerY}],")
                 .append("\"invHalfDiagonal\":${u.invHalfDiagonal},\"vignetteAmount\":${u.vignetteAmount},")
-                .append("\"grainAmount\":${u.grainAmount},\"invGrainSize\":${u.invGrainSize},\"grainSeed\":${u.grainSeed}}")
+                .append("\"grainAmount\":${u.grainAmount},\"invGrainSize\":${u.invGrainSize},\"grainOffset\":[${u.grainOffsetX},${u.grainOffsetY}]}")
         }
         json.append("}}")
         File(dir, "uniforms.json").writeText(json.toString())

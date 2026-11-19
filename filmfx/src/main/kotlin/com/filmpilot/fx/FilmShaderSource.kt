@@ -16,6 +16,8 @@ package com.filmpilot.fx
  *    `texelFetch`, in the same order as [Lut3D.sample], so it needs no float-texture filtering
  *    support and matches the CPU closely.
  *
+ *  - `uGrainLattice` is [Noise.lattice] as an R32F texture; `uGrainOffset` comes from the seed.
+ *
  * Constants are injected from the Kotlin implementation, and `FilmUniforms` supplies the
  * uniform values.
  */
@@ -45,13 +47,15 @@ uniform float uInvHalfDiagonal;
 uniform float uVignetteAmount;
 uniform float uGrainAmount;
 uniform float uInvGrainSize;
-uniform int uGrainSeed;
+uniform sampler2D uGrainLattice;
+uniform ivec2 uGrainOffset;
 uniform ivec2 uTileOrigin;
 
 out vec4 fragColor;
 
 const float VIGNETTE_START = ${FilmPipeline.VIGNETTE_START};
 const float GRAIN_FLOOR = ${FilmPipeline.GRAIN_FLOOR};
+const int LATTICE_MASK = ${Noise.LATTICE_SIZE - 1};
 
 float srgbToLinear(float c) {
     return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4);
@@ -76,27 +80,20 @@ vec3 sampleLut(vec3 c) {
     return mix(mix(c00, c10, d.y), mix(c01, c11, d.y), d.z);
 }
 
-// Noise.hash (lowbias32): identical 32-bit wrap-around arithmetic.
-uint hash(int x, int y, int seed) {
-    uint h = (uint(x) * 0x27d4eb2du) ^ (uint(y) * 0x165667b1u) ^ (uint(seed) * 0x5bd1e995u);
-    h ^= h >> 16u; h *= 0x7feb352du;
-    h ^= h >> 15u; h *= 0x846ca68bu;
-    h ^= h >> 16u;
-    return h;
+// Noise.value: grain lattice (R32F, LATTICE_SIZE², NEAREST) shared with the CPU.
+float latticeAt(int x, int y) {
+    return texelFetch(uGrainLattice, ivec2(x & LATTICE_MASK, y & LATTICE_MASK), 0).r;
 }
-float signedNoise(int x, int y, int seed) {
-    return float(hash(x, y, seed) >> 8u) * (2.0 / 16777215.0) - 1.0;
-}
-float valueNoise(float x, float y, int seed) {
+float valueNoise(float x, float y) {
     float xf = floor(x), yf = floor(y);
-    int xi = int(xf), yi = int(yf);
+    int xi = int(xf) + uGrainOffset.x, yi = int(yf) + uGrainOffset.y;
     float tx = x - xf, ty = y - yf;
     tx = tx * tx * (3.0 - 2.0 * tx);
     ty = ty * ty * (3.0 - 2.0 * ty);
-    float a = signedNoise(xi, yi, seed);
-    float b = signedNoise(xi + 1, yi, seed);
-    float c = signedNoise(xi, yi + 1, seed);
-    float d = signedNoise(xi + 1, yi + 1, seed);
+    float a = latticeAt(xi, yi);
+    float b = latticeAt(xi + 1, yi);
+    float c = latticeAt(xi, yi + 1);
+    float d = latticeAt(xi + 1, yi + 1);
     return mix(mix(a, b, tx), mix(c, d, tx), ty);
 }
 
@@ -125,7 +122,7 @@ void main() {
 
     // 4. Grain, weighted to the midtones.
     if (uGrainAmount > 0.0) {
-        float g = valueNoise(x * uInvGrainSize, y * uInvGrainSize, uGrainSeed);
+        float g = valueNoise(x * uInvGrainSize, y * uInvGrainSize);
         float l = clamp(dot(rgb, vec3(0.2126, 0.7152, 0.0722)), 0.0, 1.0);
         float weight = GRAIN_FLOOR + (1.0 - GRAIN_FLOOR) * 4.0 * l * (1.0 - l);
         rgb += g * uGrainAmount * weight;

@@ -25,4 +25,6 @@ class FilmUniforms(params: FilmParams, val width: Int, val height: Int) {
     val grainSize = max(1f, min(width, height) / FilmPipeline.GRAIN_CLUMPS_ACROSS_SHORT_SIDE)
     val invGrainSize = 1f / grainSize
     val grainSeed = params.grainSeed
+    val grainOffsetX = Noise.offsetX(params.grainSeed)
+    val grainOffsetY = Noise.offsetY(params.grainSeed)
 }

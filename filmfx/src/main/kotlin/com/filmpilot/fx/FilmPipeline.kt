@@ -43,6 +43,8 @@ class FilmPipeline(private val params: FilmParams) {
         val vignetteAmount = u.vignetteAmount
         val grainAmount = u.grainAmount
         val invGrainSize = u.invGrainSize
+        val gox = u.grainOffsetX
+        val goy = u.grainOffsetY
 
         for (row in 0 until rowCount) {
             val y = rowStart + row
@@ -80,7 +82,7 @@ class FilmPipeline(private val params: FilmParams) {
                 // 4. Grain, weighted to the midtones (film grain is least visible in deep
                 //    shadows and clipped highlights).
                 if (grainAmount > 0f) {
-                    val n = Noise.value(x * invGrainSize, y * invGrainSize, params.grainSeed)
+                    val n = Noise.value(x * invGrainSize, y * invGrainSize, gox, goy)
                     val l = ColorMath.luma(r, g, b).coerceIn(0f, 1f)
                     val weight = GRAIN_FLOOR + (1f - GRAIN_FLOOR) * 4f * l * (1f - l)
                     val delta = n * grainAmount * weight

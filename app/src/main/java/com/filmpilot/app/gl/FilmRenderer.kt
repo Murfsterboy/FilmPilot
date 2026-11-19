@@ -4,6 +4,7 @@ import android.opengl.GLES30
 import com.filmpilot.fx.FilmShaderSource
 import com.filmpilot.fx.FilmUniforms
 import com.filmpilot.fx.Lut3D
+import com.filmpilot.fx.Noise
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -17,6 +18,14 @@ class FilmRenderer {
     private val locations = HashMap<String, Int>()
     private val lutTexture = GlUtil.texture(GLES30.GL_TEXTURE_3D, GLES30.GL_NEAREST)
     private var uploadedLut: Lut3D? = null
+    private val latticeTexture = GlUtil.texture(GLES30.GL_TEXTURE_2D, GLES30.GL_NEAREST).also {
+        val n = Noise.LATTICE_SIZE
+        val data = ByteBuffer.allocateDirect(n * n * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+        data.put(Noise.lattice).position(0)
+        GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 4)
+        GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_R32F, n, n, 0, GLES30.GL_RED, GLES30.GL_FLOAT, data)
+        GlUtil.checkError("grain lattice upload")
+    }
 
     private fun loc(name: String) = locations.getOrPut(name) { GLES30.glGetUniformLocation(program, name) }
 
@@ -55,7 +64,10 @@ class FilmRenderer {
         GLES30.glUniform1f(loc("uVignetteAmount"), u.vignetteAmount)
         GLES30.glUniform1f(loc("uGrainAmount"), u.grainAmount)
         GLES30.glUniform1f(loc("uInvGrainSize"), u.invGrainSize)
-        GLES30.glUniform1i(loc("uGrainSeed"), u.grainSeed)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE2)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, latticeTexture)
+        GLES30.glUniform1i(loc("uGrainLattice"), 2)
+        GLES30.glUniform2i(loc("uGrainOffset"), u.grainOffsetX, u.grainOffsetY)
         GLES30.glUniform2i(loc("uTileOrigin"), tileX, tileY)
 
         GLES30.glEnableVertexAttribArray(aPosition)
@@ -79,6 +91,6 @@ class FilmRenderer {
 
     fun release() {
         GLES30.glDeleteProgram(program)
-        GLES30.glDeleteTextures(1, intArrayOf(lutTexture), 0)
+        GLES30.glDeleteTextures(2, intArrayOf(lutTexture, latticeTexture), 0)
     }
 }
