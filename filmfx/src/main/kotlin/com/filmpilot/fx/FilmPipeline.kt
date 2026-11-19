@@ -1,7 +1,5 @@
 package com.filmpilot.fx
 
-import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sqrt
 
@@ -24,6 +22,7 @@ class FilmPipeline(private val params: FilmParams) {
 
     private val exposureGain = 2f.pow(params.exposureEv)
     private val applyExposure = params.exposureEv != 0f
+    // Note: per-image values come from FilmUniforms, shared with the GPU shader.
 
     /** Process a whole image held in [pixels]. */
     fun process(pixels: IntArray, width: Int, height: Int) =
@@ -35,17 +34,15 @@ class FilmPipeline(private val params: FilmParams) {
      */
     fun processRows(pixels: IntArray, width: Int, height: Int, rowStart: Int, rowCount: Int) {
         require(pixels.size >= width * rowCount) { "pixels too small for $rowCount rows" }
-        val lut = params.lut
+        val u = FilmUniforms(params, width, height)
+        val lut = u.lut
         val rgb = FloatArray(3)
-
-        // Position helpers (shared with a future shader as uniforms).
-        val cx = width / 2f
-        val cy = height / 2f
-        val invHalfDiag = 1f / sqrt(cx * cx + cy * cy)
-        val vignetteAmount = params.vignette * VIGNETTE_MAX_DARKEN
-        val grainAmount = params.grain * GRAIN_MAX_AMPLITUDE
-        val grainSize = max(1f, min(width, height) / GRAIN_CLUMPS_ACROSS_SHORT_SIDE)
-        val invGrainSize = 1f / grainSize
+        val cx = u.centerX
+        val cy = u.centerY
+        val invHalfDiag = u.invHalfDiagonal
+        val vignetteAmount = u.vignetteAmount
+        val grainAmount = u.grainAmount
+        val invGrainSize = u.invGrainSize
 
         for (row in 0 until rowCount) {
             val y = rowStart + row

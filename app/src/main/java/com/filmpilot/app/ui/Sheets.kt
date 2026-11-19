@@ -23,6 +23,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -32,6 +33,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.filmpilot.app.film.CameraState
 import com.filmpilot.app.film.FilmStock
@@ -112,6 +115,8 @@ fun AdjustSheet(
     onExposure: (Float) -> Unit,
     onGrain: (Float) -> Unit,
     onVignette: (Float) -> Unit,
+    onLivePreview: (Boolean) -> Unit,
+    liveAvailable: Boolean,
     onReset: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -119,7 +124,8 @@ fun AdjustSheet(
         Column(Modifier.navigationBarsPadding().padding(horizontal = 24.dp).padding(bottom = 16.dp)) {
             Text("Adjust", style = MaterialTheme.typography.titleLarge)
             Text(
-                "Applied when each photo is developed (the live preview stays unprocessed for now).",
+                if (camera.livePreview && liveAvailable) "Changes show live in the viewfinder and in every photo."
+                else "Applied to every photo as it is developed.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -139,6 +145,26 @@ fun AdjustSheet(
             }
             LabeledSlider("Vignette", percent(camera.vignette)) {
                 Slider(value = camera.vignette, onValueChange = onVignette)
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Live film preview", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        if (liveAvailable) "See the film look while framing (uses the GPU)"
+                        else "Not available on this phone",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = camera.livePreview && liveAvailable,
+                    onCheckedChange = onLivePreview,
+                    enabled = liveAvailable,
+                    modifier = Modifier.semantics { contentDescription = "Live film preview" },
+                )
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 TextButton(onClick = onReset) { Text("Reset") }

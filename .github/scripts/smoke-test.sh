@@ -39,6 +39,9 @@ adb shell am start -W -n "$PKG/.MainActivity"
 sleep 6
 shot 01-viewfinder
 check_crash "launch"
+adb logcat -d -s FilmPilot > "$OUT/launch-log.txt" 2>/dev/null
+grep -q "Live film preview started" "$OUT/launch-log.txt" || fail "live film preview didn't start"
+grep -q "Live film preview failed" "$OUT/launch-log.txt" && fail "live film preview reported a failure"
 
 step "Shoot 3 frames"
 BEFORE=$(photo_count)
@@ -58,6 +61,8 @@ echo "photos in Pictures/FilmPilot: before=$BEFORE after=$AFTER"
 dump
 grep -q "3 of 24 shots taken" "$OUT/ui.xml" || fail "shot counter should read 3 of 24"
 check_crash "shooting"
+adb logcat -d -s FilmPilot | grep "Developed" | tee "$OUT/develop-log.txt"
+[ "$(grep -c ' on GPU ' "$OUT/develop-log.txt")" -ge 3 ] || fail "photos should be developed on the GPU"
 
 step "Pull one developed photo"
 NAME=$(adb shell ls /sdcard/Pictures/FilmPilot 2>/dev/null | tr -d '\r' | grep '\.jpg$' | head -1)

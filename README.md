@@ -5,7 +5,21 @@ vignette and exposure compensation, saved to `Pictures/FilmPilot`.
 
 Kotlin + Jetpack Compose + CameraX, min SDK 26 (Android 8.0).
 
-## Phase 1 (this build)
+## Phase 2: live film viewfinder
+
+- The viewfinder shows the film look live: stock, exposure, vignette and grain, with grain that
+  moves from frame to frame like real film. Slider and film changes apply instantly. It runs on the
+  GPU through a CameraX `CameraEffect` (`gl/FilmSurfaceProcessor.kt`).
+- Photos are developed on the GPU with the same shader, in tiles, at full resolution
+  (`gl/GpuDeveloper.kt`). If the GPU path fails, the Kotlin pipeline takes over automatically.
+- "Live film preview" can be switched off in the Adjust sheet. If a phone can't run it, the app
+  falls back to the plain preview and says so.
+- `filmfx/FilmShaderSource.kt` is a line-for-line GLSL port of `FilmPipeline`. Both read their values
+  from `FilmUniforms`. An instrumented test (`GpuMatchTest`) checks on the emulator's GPU that the
+  shader matches the Kotlin reference within 2 levels (out of 255) for ≥99.9% of values, and that
+  tiling makes no difference.
+
+## Phase 1
 
 - CameraX viewfinder (back camera, 4:3) and capture.
 - Each frame is "developed" in the background: exposure → film LUT → vignette → grain,
@@ -15,22 +29,23 @@ Kotlin + Jetpack Compose + CameraX, min SDK 26 (Android 8.0).
 - Frame counter, 24 shots per roll. Changing film mid-roll asks to rewind and load a new roll.
   The roll and settings survive app restarts.
 
-The live preview is not processed yet; the look is applied to the saved photo. That's phase 2.
-
 ## Project layout
 
 ```
 FilmPilot/
 ├─ filmfx/                      Effects pipeline: pure Kotlin/JVM, no Android dependency
 │  └─ src/main/kotlin/com/filmpilot/fx/
-│     ├─ FilmPipeline.kt        per-pixel: exposure → LUT → vignette → grain (strip-able, thread-safe)
+│     ├─ FilmPipeline.kt        per-pixel: exposure → LUT → vignette → grain (CPU reference)
+│     ├─ FilmShaderSource.kt    the same pipeline in GLSL ES 3.00 (live preview + GPU developing)
+│     ├─ FilmUniforms.kt        derived per-frame values shared by both
 │     ├─ FilmParams.kt          all inputs for one frame (future shader uniforms)
 │     ├─ Lut3D.kt, CubeParser.kt  .cube parsing + trilinear lookup
 │     └─ Noise.kt, ColorMath.kt   integer-hash grain noise, sRGB ↔ linear
 ├─ app/                         Android app
 │  ├─ src/main/assets/luts/     ← drop .cube files here
 │  └─ src/main/java/com/filmpilot/app/
-│     ├─ camera/                BitmapFilm (Bitmap ↔ pipeline), FilmDeveloper, GallerySaver
+│     ├─ camera/                BitmapFilm (Bitmap ↔ CPU pipeline), FilmDeveloper, GallerySaver
+│     ├─ gl/                    EGL, film shader renderer, live preview processor, GPU developer
 │     ├─ film/                  LutCatalog, roll + settings persistence
 │     ├─ ui/                    CameraScreen, Viewfinder, film picker / adjust sheets
 │     ├─ CameraViewModel.kt
@@ -40,9 +55,8 @@ FilmPilot/
 
 Why `filmfx` is separate: every effect is a pure function of (pixel colour, normalized
 position, `FilmParams`) and uses only shader-friendly maths (integer hash noise, smoothstep,
-trilinear lookup in red-fastest order). Phase 2 can port `FilmPipeline.processRows` almost line
-by line into a GLSL/AGSL fragment shader for a live preview, and keep the Kotlin version as the
-reference implementation that the unit tests pin down.
+trilinear lookup in red-fastest order). The Kotlin version is the reference that the unit tests
+pin down; the GLSL port is tested against it.
 
 ## Adding films
 
@@ -105,11 +119,13 @@ FX_PREVIEW_DIR=/tmp/fx ./gradlew -PfxOnly :filmfx:test --tests '*PreviewRender*'
 ```
 
 CI (`.github/workflows/build.yml`) runs the effects tests, builds the release APK, publishes
-it as the `latest` release, then runs an emulator smoke test that shoots three frames
-with the emulated camera and checks they reach `Pictures/FilmPilot`.
+it as the `latest` release, then on an emulator runs the GPU-vs-CPU match tests and a smoke
+test. The smoke test checks that the live film preview starts, shoots three frames with the
+emulated camera, checks they were developed on the GPU and reached `Pictures/FilmPilot`, and
+fails on any crash.
 
 ## Later phases (planned)
 
-- Live film preview: port `FilmPipeline` to an OpenGL ES / AGSL shader on the camera stream.
+- Film response: highlight roll-off, halation, colour grain, film stocks as profiles.
 - Lens presets: crop, barrel/pincushion distortion, lens-specific vignette.
 - Camera presets: half-frame (two portrait frames per shot, 48-exposure roll), date stamp.

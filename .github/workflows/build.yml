@@ -59,6 +59,13 @@ jobs:
         with:
           name: FilmPilot-apk
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -74,10 +81,19 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back emulated
-          script: bash .github/scripts/smoke-test.sh
+          # GPU-vs-CPU match tests on the emulator's GL stack, then the app smoke test.
+          script: |
+            chmod +x gradlew && ./gradlew --no-daemon :app:connectedDebugAndroidTest
+            bash .github/scripts/smoke-test.sh
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: filmpilot-emulator-screenshots
+          name: emulator-screenshots
           path: filmpilot-screenshots/
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gpu-test-report
+          path: app/build/reports/androidTests/

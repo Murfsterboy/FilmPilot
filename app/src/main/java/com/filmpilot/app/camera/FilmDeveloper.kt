@@ -4,7 +4,10 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.SystemClock
+import android.util.Log
 import androidx.exifinterface.media.ExifInterface
+import com.filmpilot.app.gl.GpuDeveloper
 import com.filmpilot.fx.FilmParams
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -19,12 +22,30 @@ class DevelopedPhoto(val uri: Uri, val thumbnail: Bitmap)
  * "Develops" a captured JPEG: decode → film effects → JPEG with the original
  * camera metadata → gallery. Runs entirely off the main thread.
  */
-class FilmDeveloper(private val context: Context) {
+class FilmDeveloper(private val context: Context, private val gpu: GpuDeveloper?) {
+
+    /** Set after the GPU path fails once, so later frames go straight to the CPU. */
+    @Volatile private var gpuFailed = false
 
     suspend fun develop(jpeg: ByteArray, rotationDegrees: Int, params: FilmParams): DevelopedPhoto {
-        val bitmap = decodeMutable(jpeg)
+        var bitmap = decodeMutable(jpeg)
         try {
-            BitmapFilm.apply(bitmap, params)
+            val start = SystemClock.elapsedRealtime()
+            var path = "CPU"
+            if (gpu != null && !gpuFailed) {
+                try {
+                    gpu.develop(bitmap, params)
+                    path = "GPU"
+                } catch (t: Throwable) {
+                    Log.w(TAG, "GPU developing failed, using the CPU from now on", t)
+                    gpuFailed = true
+                    // The bitmap may be partly processed: start again from the original.
+                    bitmap.recycle()
+                    bitmap = decodeMutable(jpeg)
+                }
+            }
+            if (path == "CPU") BitmapFilm.apply(bitmap, params)
+            Log.i(TAG, "Developed ${bitmap.width}x${bitmap.height} on $path in ${SystemClock.elapsedRealtime() - start} ms")
 
             val tmp = File(context.cacheDir, "develop-${System.nanoTime()}.jpg")
             try {
@@ -93,6 +114,7 @@ class FilmDeveloper(private val context: Context) {
     }
 
     private companion object {
+        const val TAG = "FilmPilot"
         const val JPEG_QUALITY = 95
         const val THUMB_SIZE = 256
         val COPIED_TAGS = listOf(

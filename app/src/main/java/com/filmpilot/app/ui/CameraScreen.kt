@@ -122,7 +122,12 @@ fun CameraScreen(vm: CameraViewModel) {
                 contentAlignment = Alignment.Center,
             ) {
                 Box(Modifier.fillMaxWidth().aspectRatio(VIEWFINDER_ASPECT)) {
-                    Viewfinder(Modifier.fillMaxSize()) { imageCapture = it }
+                    Viewfinder(
+                        liveParams = state.liveParams,
+                        modifier = Modifier.fillMaxSize(),
+                        onLiveError = vm::onLivePreviewFailed,
+                        onImageCapture = { imageCapture = it },
+                    )
                     // Shutter "blink".
                     Box(Modifier.fillMaxSize().alpha(flash.value).background(Color.Black))
                     if (state.camera.rollFinished) RollFinishedOverlay(state.film.name) { vm.loadNewRoll() }
@@ -165,6 +170,8 @@ fun CameraScreen(vm: CameraViewModel) {
             onExposure = vm::setExposure,
             onGrain = vm::setGrain,
             onVignette = vm::setVignette,
+            onLivePreview = vm::setLivePreview,
+            liveAvailable = !state.liveFailed,
             onReset = vm::resetEffects,
             onDismiss = { showAdjust = false },
         )

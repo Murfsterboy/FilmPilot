@@ -11,7 +11,9 @@ import com.filmpilot.app.film.CameraState
 import com.filmpilot.app.film.FilmSettingsStore
 import com.filmpilot.app.film.FilmStock
 import com.filmpilot.app.film.LutCatalog
+import com.filmpilot.app.gl.GpuDeveloper
 import com.filmpilot.fx.FilmParams
+import com.filmpilot.fx.Lut3D
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,6 +27,10 @@ data class UiState(
     val camera: CameraState,
     val film: FilmStock,
     val films: List<FilmStock>,
+    /** The loaded film's LUT (null while loading, or for Neutral). Used by the live viewfinder. */
+    val lut: Lut3D? = null,
+    /** The live film preview failed on this device this session; the plain preview is used. */
+    val liveFailed: Boolean = false,
     /** Captures sent to the camera but not yet returned. */
     val capturing: Int = 0,
     /** Frames being developed (effects + saving) in the background. */
@@ -35,13 +41,23 @@ data class UiState(
 ) {
     /** True while another frame can be shot on this roll. */
     val canShoot get() = camera.shotsTaken + capturing < CameraState.ROLL_SIZE
+
+    /** What the live viewfinder should show, or null for the plain camera preview. */
+    val liveParams: FilmParams?
+        get() = if (!camera.livePreview || liveFailed) null else FilmParams(
+            lut = lut,
+            exposureEv = camera.exposureEv,
+            grain = camera.grain,
+            vignette = camera.vignette,
+        )
 }
 
 class CameraViewModel(app: Application) : AndroidViewModel(app) {
 
     private val catalog = LutCatalog(app.assets)
     private val store = FilmSettingsStore(app)
-    private val developer = FilmDeveloper(app)
+    private val gpu = GpuDeveloper()
+    private val developer = FilmDeveloper(app, gpu)
 
     /** Frames are developed one at a time, so a burst never holds several full-size bitmaps. */
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -56,8 +72,17 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     init {
-        // Parse the current film's LUT early so the first shot isn't slower.
-        viewModelScope.launch(darkroom) { runCatching { catalog.load(_state.value.film.id) } }
+        loadLut(_state.value.film.id)
+    }
+
+    /** Parse the film's LUT in the background and hand it to the live viewfinder. */
+    private fun loadLut(filmId: String) {
+        viewModelScope.launch(darkroom) {
+            val lut = runCatching { catalog.load(filmId) }
+                .onFailure { Log.e(TAG, "Couldn't load film $filmId", it) }
+                .getOrNull()
+            _state.update { if (it.film.id == filmId) it.copy(lut = lut) else it }
+        }
     }
 
     /** Reserve a frame before asking the camera for a picture. Returns false if the roll is full. */
@@ -104,8 +129,8 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     fun loadNewRoll(filmId: String = _state.value.film.id) {
         val film = catalog.stock(filmId)
         updateCamera { it.copy(filmId = film.id, shotsTaken = 0) }
-        _state.update { it.copy(film = film) }
-        viewModelScope.launch(darkroom) { runCatching { catalog.load(film.id) } }
+        _state.update { it.copy(film = film, lut = if (it.film.id == film.id) it.lut else null) }
+        loadLut(film.id)
     }
 
     fun setExposure(ev: Float) = updateCamera {
@@ -117,7 +142,21 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         it.copy(exposureEv = CameraState.DEFAULT_EV, grain = CameraState.DEFAULT_GRAIN, vignette = CameraState.DEFAULT_VIGNETTE)
     }
 
+    fun setLivePreview(on: Boolean) = updateCamera { it.copy(livePreview = on) }
+
+    fun onLivePreviewFailed(error: Throwable) {
+        Log.e(TAG, "Live film preview failed; using the plain preview", error)
+        _state.update {
+            if (it.liveFailed) it
+            else it.copy(liveFailed = true, message = "Live film preview isn't available on this phone. Photos still get the look.")
+        }
+    }
+
     fun messageShown() = _state.update { it.copy(message = null) }
+
+    override fun onCleared() {
+        gpu.release()
+    }
 
     private fun updateCamera(change: (CameraState) -> CameraState) {
         _state.update { s -> s.copy(camera = change(s.camera)).also { store.save(it.camera) } }

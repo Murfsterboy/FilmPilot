@@ -9,6 +9,8 @@ data class CameraState(
     val exposureEv: Float,
     val grain: Float,
     val vignette: Float,
+    /** Show the film look live in the viewfinder (GPU). */
+    val livePreview: Boolean = true,
 ) {
     val shotsLeft get() = ROLL_SIZE - shotsTaken
     val rollFinished get() = shotsTaken >= ROLL_SIZE
@@ -31,6 +33,7 @@ class FilmSettingsStore(context: Context) {
         exposureEv = prefs.getFloat(K_EV, CameraState.DEFAULT_EV),
         grain = prefs.getFloat(K_GRAIN, CameraState.DEFAULT_GRAIN),
         vignette = prefs.getFloat(K_VIGNETTE, CameraState.DEFAULT_VIGNETTE),
+        livePreview = prefs.getBoolean(K_LIVE, true),
     )
 
     fun save(s: CameraState) {
@@ -40,6 +43,7 @@ class FilmSettingsStore(context: Context) {
             .putFloat(K_EV, s.exposureEv)
             .putFloat(K_GRAIN, s.grain)
             .putFloat(K_VIGNETTE, s.vignette)
+            .putBoolean(K_LIVE, s.livePreview)
             .apply()
     }
 
@@ -49,5 +53,6 @@ class FilmSettingsStore(context: Context) {
         const val K_EV = "exposure_ev"
         const val K_GRAIN = "grain"
         const val K_VIGNETTE = "vignette"
+        const val K_LIVE = "live_preview"
     }
 }
