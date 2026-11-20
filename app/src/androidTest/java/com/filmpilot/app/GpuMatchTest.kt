@@ -8,6 +8,7 @@ import com.filmpilot.app.camera.BitmapFilm
 import com.filmpilot.app.gl.GpuDeveloper
 import com.filmpilot.fx.CubeParser
 import com.filmpilot.fx.FilmParams
+import com.filmpilot.fx.LensParams
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -78,6 +79,24 @@ class GpuMatchTest {
             "neutral" to FilmParams(null, exposureEv = 1f, grain = 0.3f, vignette = 0.2f, grainSeed = 123456789),
         )
         val failures = cases.mapNotNull { (name, p) -> compare(name, gpu(src, p, tile = 256), cpu(src, p)) }
+        assertTrue(failures.joinToString(" | "), failures.isEmpty())
+    }
+
+    @Test fun gpuLensMatchesCpuReference() {
+        val src = chart()
+        val lenses = mapOf(
+            "wide" to LensParams(0.06f, 0.0015f, 0.25f),
+            "toy" to LensParams(0.09f, 0.004f, 0.8f),
+            "tele" to LensParams(-0.012f, 0.0004f, 0f),
+        )
+        val failures = lenses.mapNotNull { (name, lens) ->
+            val dev = GpuDeveloper(maxTile = 256)
+            val g = src.mutableCopy()
+            try { runBlocking { dev.applyLens(g, lens) } } finally { dev.release() }
+            val c = src.mutableCopy()
+            runBlocking { BitmapFilm.applyLens(c, lens) }
+            compare("lens-$name", pixels(g), pixels(c))
+        }
         assertTrue(failures.joinToString(" | "), failures.isEmpty())
     }
 

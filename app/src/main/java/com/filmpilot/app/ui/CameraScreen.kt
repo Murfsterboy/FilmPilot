@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -45,38 +47,49 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.filmpilot.app.CameraViewModel
-import com.filmpilot.app.film.CameraState
+import com.filmpilot.app.camera.DateStamp
+import com.filmpilot.app.film.Casing
+import java.util.Date
 import kotlinx.coroutines.launch
 
 val Amber = Color(0xFFE8A33D)
 
+private enum class Picker { NONE, BODY, LENS, FILM, ADJUST }
+
 @Composable
 fun CameraScreen(vm: CameraViewModel) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val meter by vm.meter.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     val flash = remember { Animatable(0f) }
+    val casing = state.body.casing
 
     var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
-    var showFilms by remember { mutableStateOf(false) }
-    var showAdjust by remember { mutableStateOf(false) }
+    var picker by remember { mutableStateOf(Picker.NONE) }
 
     LaunchedEffect(state.message) {
         state.message?.let { snackbar.showSnackbar(it); vm.messageShown() }
@@ -109,36 +122,67 @@ fun CameraScreen(vm: CameraViewModel) {
         )
     }
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
+    Box(Modifier.fillMaxSize().leatherette(casing.covering.color())) {
         Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-            TopBar(
-                filmName = state.film.name,
+            TopPlate(
+                casing = casing,
+                bodyName = state.body.name,
                 shotsTaken = state.camera.shotsTaken,
-                onFilmClick = { showFilms = true },
+                rollSize = state.camera.rollSize,
+                dateStamp = state.camera.dateStamp,
+                onDateStamp = vm::setDateStamp,
             )
 
-            Box(
-                Modifier.fillMaxWidth().weight(1f),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(Modifier.fillMaxWidth().aspectRatio(VIEWFINDER_ASPECT)) {
+            Box(Modifier.fillMaxWidth().weight(1f).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
+                Box(
+                    Modifier
+                        .aspectRatio(VIEWFINDER_ASPECT)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color.Black)
+                        .border(3.dp, Color.Black.copy(alpha = 0.7f), RoundedCornerShape(10.dp)),
+                ) {
                     Viewfinder(
                         liveParams = state.liveParams,
+                        lens = state.liveLens,
+                        focalMm = state.lens.focalMm,
                         modifier = Modifier.fillMaxSize(),
                         onLiveError = vm::onLivePreviewFailed,
+                        onMeter = vm::onMeterReading,
                         onImageCapture = { imageCapture = it },
+                    )
+                    FrameLinesOverlay(state.body.format)
+                    if (state.camera.dateStamp) DateStampPreview(Modifier.align(Alignment.BottomEnd))
+                    LightMeterScale(
+                        reading = meter,
+                        compensation = state.camera.exposureEv,
+                        onCompensation = vm::setExposure,
+                        modifier = Modifier.align(Alignment.TopCenter),
                     )
                     // Shutter "blink".
                     Box(Modifier.fillMaxSize().alpha(flash.value).background(Color.Black))
-                    if (state.camera.rollFinished) RollFinishedOverlay(state.film.name) { vm.loadNewRoll() }
+                    if (state.camera.rollFinished) {
+                        RollFinishedOverlay(state.camera.rollSize, state.film.name) { vm.loadNewRoll() }
+                    }
                 }
             }
 
-            BottomBar(
+            GearRow(casing) {
+                GearCard("Body", state.body.name, casing, onClick = { picker = Picker.BODY }) {
+                    BodyIcon(casing, Modifier.size(width = 64.dp, height = 40.dp))
+                }
+                GearCard("Lens", state.lens.name, casing, onClick = { picker = Picker.LENS }) {
+                    LensIcon(state.lens.focalMm, state.lens.id == "toy", Modifier.size(width = 64.dp, height = 40.dp))
+                }
+                GearCard("Film", state.film.name, casing, onClick = { picker = Picker.FILM }) {
+                    FilmIcon(Modifier.size(width = 64.dp, height = 40.dp))
+                }
+            }
+
+            BottomPlate(
+                casing = casing,
                 thumbnail = state.lastPhoto?.asImageBitmap(),
                 developing = state.developing,
                 shutterEnabled = state.canShoot && imageCapture != null,
-                exposureLabel = formatEv(state.camera.exposureEv),
                 onThumbnailClick = {
                     state.lastPhotoUri?.let { uri ->
                         runCatching {
@@ -149,23 +193,32 @@ fun CameraScreen(vm: CameraViewModel) {
                     }
                 },
                 onShutter = { shoot() },
-                onAdjust = { showAdjust = true },
+                onAdjust = { picker = Picker.ADJUST },
             )
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = 140.dp))
     }
 
-    if (showFilms) {
-        FilmPickerSheet(
+    when (picker) {
+        Picker.NONE -> Unit
+        Picker.BODY -> BodyPickerSheet(
+            camera = state.camera,
+            onLoadBody = { vm.loadNewRoll(bodyId = it.id); picker = Picker.NONE },
+            onDismiss = { picker = Picker.NONE },
+        )
+        Picker.LENS -> LensPickerSheet(
+            current = state.lens,
+            onSelect = { vm.selectLens(it.id); picker = Picker.NONE },
+            onDismiss = { picker = Picker.NONE },
+        )
+        Picker.FILM -> FilmPickerSheet(
             films = state.films,
             current = state.film,
             camera = state.camera,
-            onLoadRoll = { vm.loadNewRoll(it.id); showFilms = false },
-            onDismiss = { showFilms = false },
+            onLoadRoll = { vm.loadNewRoll(filmId = it.id); picker = Picker.NONE },
+            onDismiss = { picker = Picker.NONE },
         )
-    }
-    if (showAdjust) {
-        AdjustSheet(
+        Picker.ADJUST -> AdjustSheet(
             camera = state.camera,
             onExposure = vm::setExposure,
             onGrain = vm::setGrain,
@@ -173,66 +226,148 @@ fun CameraScreen(vm: CameraViewModel) {
             onLivePreview = vm::setLivePreview,
             liveAvailable = !state.liveFailed,
             onReset = vm::resetEffects,
-            onDismiss = { showAdjust = false },
+            onDismiss = { picker = Picker.NONE },
         )
     }
 }
 
+/** Top plate: frame counter window, engraved model name, date-imprint switch. */
 @Composable
-private fun TopBar(filmName: String, shotsTaken: Int, onFilmClick: () -> Unit) {
+private fun TopPlate(
+    casing: Casing,
+    bodyName: String,
+    shotsTaken: Int,
+    rollSize: Int,
+    dateStamp: Boolean,
+    onDateStamp: (Boolean) -> Unit,
+) {
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(Brush.verticalGradient(listOf(casing.plate.color(), casing.plate.color().copy(alpha = 0.85f))))
+            .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Frame counter, like the little window on top of a film camera.
         Text(
-            filmName,
-            color = Color.White,
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier
-                .clip(RoundedCornerShape(50))
-                .border(1.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(50))
-                .clickable(onClick = onFilmClick)
-                .padding(horizontal = 14.dp, vertical = 8.dp)
-                .semantics { contentDescription = "Film: $filmName. Tap to change film." },
-        )
-        Spacer(Modifier.weight(1f))
-        // Frame counter, like the little window on a film camera.
-        Text(
-            "%02d/%d".format(shotsTaken, CameraState.ROLL_SIZE),
+            "%02d/%d".format(shotsTaken, rollSize),
             color = Amber,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Bold,
-            fontSize = 22.sp,
+            fontSize = 20.sp,
             modifier = Modifier
                 .clip(RoundedCornerShape(6.dp))
-                .background(Color(0xFF1B1714))
-                .padding(horizontal = 10.dp, vertical = 4.dp)
-                .semantics { contentDescription = "$shotsTaken of ${CameraState.ROLL_SIZE} shots taken" },
+                .background(Color(0xFF15120F))
+                .border(1.dp, Color.Black, RoundedCornerShape(6.dp))
+                .padding(horizontal = 10.dp, vertical = 3.dp)
+                .semantics { contentDescription = "$shotsTaken of $rollSize shots taken" },
+        )
+        Spacer(Modifier.weight(1f))
+        Text(
+            bodyName.uppercase(),
+            color = casing.engraving.color(),
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 3.sp,
+            fontSize = 13.sp,
+        )
+        Spacer(Modifier.weight(1f))
+        Text(
+            "DATE",
+            color = if (dateStamp) Color(0xFFFF9A2E) else casing.engraving.color().copy(alpha = 0.6f),
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Bold,
+            fontSize = 12.sp,
+            modifier = Modifier
+                .clip(RoundedCornerShape(5.dp))
+                .border(1.5.dp, if (dateStamp) Color(0xFFFF9A2E) else casing.engraving.color().copy(alpha = 0.5f), RoundedCornerShape(5.dp))
+                .clickable { onDateStamp(!dateStamp) }
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+                .semantics {
+                    contentDescription = "Date imprint"
+                    stateDescription = if (dateStamp) "On" else "Off"
+                    role = Role.Switch
+                },
         )
     }
 }
 
+/** What the imprint will look like, in the viewfinder corner. */
 @Composable
-private fun BottomBar(
-    thumbnail: androidx.compose.ui.graphics.ImageBitmap?,
+private fun DateStampPreview(modifier: Modifier = Modifier) {
+    Text(
+        DateStamp.text(Date()),
+        color = Color(0xFFFF9A2E),
+        fontFamily = FontFamily.Monospace,
+        fontWeight = FontWeight.Bold,
+        fontSize = 14.sp,
+        letterSpacing = 1.sp,
+        modifier = modifier.padding(16.dp),
+    )
+}
+
+@Composable
+private fun GearRow(casing: Casing, content: @Composable RowScope.() -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        content = content,
+    )
+}
+
+/** One of the BODY / LENS / FILM cards under the viewfinder. Tap to swap. */
+@Composable
+private fun RowScope.GearCard(
+    label: String,
+    value: String,
+    casing: Casing,
+    onClick: () -> Unit,
+    icon: @Composable () -> Unit,
+) {
+    Column(
+        Modifier
+            .weight(1f)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.Black.copy(alpha = 0.35f))
+            .border(1.dp, casing.plate.color().copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 6.dp)
+            .semantics(mergeDescendants = true) { contentDescription = "$label: $value. Tap to change." },
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(label.uppercase(), color = Color.White.copy(alpha = 0.6f), fontSize = 10.sp, letterSpacing = 2.sp)
+        Text(
+            value, color = Amber, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.height(4.dp))
+        icon()
+    }
+}
+
+/** Bottom plate: last photo, shutter release, adjust. */
+@Composable
+private fun BottomPlate(
+    casing: Casing,
+    thumbnail: ImageBitmap?,
     developing: Int,
     shutterEnabled: Boolean,
-    exposureLabel: String,
     onThumbnailClick: () -> Unit,
     onShutter: () -> Unit,
     onAdjust: () -> Unit,
 ) {
     Row(
-        Modifier.fillMaxWidth().height(128.dp).padding(horizontal = 32.dp),
+        Modifier.fillMaxWidth().height(112.dp).padding(horizontal = 32.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        // Last developed photo.
         Box(
             Modifier
-                .size(56.dp)
+                .size(54.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(Color(0xFF222222))
+                .background(Color.Black.copy(alpha = 0.5f))
+                .border(1.dp, casing.metal.color().copy(alpha = 0.5f), RoundedCornerShape(8.dp))
                 .clickable(enabled = thumbnail != null, onClick = onThumbnailClick)
                 .semantics { contentDescription = "Last photo" },
             contentAlignment = Alignment.Center,
@@ -241,39 +376,40 @@ private fun BottomBar(
                 Image(thumbnail, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             }
             if (developing > 0) {
-                CircularProgressIndicator(color = Amber, strokeWidth = 3.dp, modifier = Modifier.size(32.dp))
+                CircularProgressIndicator(color = Amber, strokeWidth = 3.dp, modifier = Modifier.size(30.dp))
             }
         }
 
-        // Shutter.
+        // Shutter release, in the casing's metal.
         Box(
             Modifier
-                .size(80.dp)
-                .border(4.dp, if (shutterEnabled) Color.White else Color.Gray, CircleShape)
+                .size(82.dp)
+                .border(4.dp, casing.metal.color().copy(alpha = if (shutterEnabled) 1f else 0.4f), CircleShape)
                 .padding(8.dp)
                 .clip(CircleShape)
-                .background(if (shutterEnabled) Color.White else Color.DarkGray)
+                .background(
+                    if (shutterEnabled) Brush.radialGradient(listOf(Color.White, casing.metal.color()))
+                    else Brush.radialGradient(listOf(Color.DarkGray, Color.DarkGray))
+                )
                 .clickable(enabled = shutterEnabled, onClick = onShutter)
                 .semantics { contentDescription = "Shutter" },
         )
 
-        // Adjust (exposure, grain, vignette).
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.width(54.dp), contentAlignment = Alignment.Center) {
             IconButton(onClick = onAdjust) {
                 Icon(Icons.Filled.Settings, contentDescription = "Adjust exposure, grain and vignette", tint = Color.White)
             }
-            Text(exposureLabel, color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
         }
     }
 }
 
 @Composable
-private fun RollFinishedOverlay(filmName: String, onNewRoll: () -> Unit) {
+private fun RollFinishedOverlay(rollSize: Int, filmName: String, onNewRoll: () -> Unit) {
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.75f)), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text("Roll finished", color = Color.White, style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(4.dp))
-            Text("All ${CameraState.ROLL_SIZE} frames shot.", color = Color.White.copy(alpha = 0.7f))
+            Text("All $rollSize frames shot.", color = Color.White.copy(alpha = 0.7f))
             Spacer(Modifier.height(16.dp))
             Button(onClick = onNewRoll) { Text("Load new roll of $filmName") }
         }

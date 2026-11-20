@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -37,7 +38,10 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.filmpilot.app.film.CameraState
+import com.filmpilot.app.film.CameraBody
 import com.filmpilot.app.film.FilmStock
+import com.filmpilot.app.film.Gear
+import com.filmpilot.app.film.Lens
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -57,7 +61,7 @@ fun FilmPickerSheet(
         Column(Modifier.navigationBarsPadding().padding(bottom = 16.dp)) {
             Text("Film", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 24.dp))
             Text(
-                "${current.name}: ${camera.shotsTaken} of ${CameraState.ROLL_SIZE} shot",
+                "${current.name}: ${camera.shotsTaken} of ${camera.rollSize} shot",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
@@ -97,13 +101,111 @@ fun FilmPickerSheet(
             title = { Text("Rewind this roll?") },
             text = {
                 Text(
-                    "You've shot ${camera.shotsTaken} of ${CameraState.ROLL_SIZE}. Photos already taken stay in " +
+                    "You've shot ${camera.shotsTaken} of ${camera.rollSize}. Photos already taken stay in " +
                         "your gallery. A new roll of ${film.name} starts at frame 1."
                 )
             },
             confirmButton = { TextButton(onClick = { confirm = null; onLoadRoll(film) }) { Text("Load new roll") } },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("Cancel") } },
         )
+    }
+}
+
+/** Pick a camera body. A different body needs a fresh roll (its frame size and count differ). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BodyPickerSheet(
+    camera: CameraState,
+    onLoadBody: (CameraBody) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var confirm by remember { mutableStateOf<CameraBody?>(null) }
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.navigationBarsPadding().padding(bottom = 16.dp)) {
+            Text("Camera", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 24.dp))
+            Spacer(Modifier.height(8.dp))
+            LazyColumn {
+                items(Gear.bodies, key = { it.id }) { body ->
+                    PickerRow(
+                        title = body.name,
+                        subtitle = body.description,
+                        selected = body.id == camera.bodyId,
+                        onClick = {
+                            when {
+                                body.id == camera.bodyId -> onDismiss()
+                                camera.shotsTaken == 0 -> onLoadBody(body)
+                                else -> confirm = body
+                            }
+                        },
+                    ) { BodyIcon(body.casing, Modifier.size(width = 56.dp, height = 36.dp)) }
+                }
+            }
+        }
+    }
+    confirm?.let { body ->
+        AlertDialog(
+            onDismissRequest = { confirm = null },
+            title = { Text("Switch to ${body.name}?") },
+            text = {
+                Text(
+                    "Changing camera rewinds this roll (${camera.shotsTaken} of ${camera.rollSize} shot). " +
+                        "Photos already taken stay in your gallery. The ${body.name} starts a new roll of ${body.exposures}."
+                )
+            },
+            confirmButton = { TextButton(onClick = { confirm = null; onLoadBody(body) }) { Text("Load new roll") } },
+            dismissButton = { TextButton(onClick = { confirm = null }) { Text("Cancel") } },
+        )
+    }
+}
+
+/** Pick a lens. Lenses swap freely mid-roll, like on a real camera. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun LensPickerSheet(current: Lens, onSelect: (Lens) -> Unit, onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.navigationBarsPadding().padding(bottom = 16.dp)) {
+            Text("Lens", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 24.dp))
+            Text(
+                "Zooms the camera to the focal length and simulates the lens's character.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+            )
+            Spacer(Modifier.height(8.dp))
+            LazyColumn {
+                items(Gear.lenses, key = { it.id }) { lens ->
+                    PickerRow(lens.name, lens.description, lens.id == current.id, onClick = { onSelect(lens) }) {
+                        LensIcon(lens.focalMm, lens.id == "toy", Modifier.size(width = 56.dp, height = 36.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PickerRow(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    icon: @Composable () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 24.dp, vertical = 10.dp)
+            .semantics(mergeDescendants = true) { contentDescription = title },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        icon()
+        Spacer(Modifier.width(16.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (selected) Icon(Icons.Filled.Check, contentDescription = "Selected")
     }
 }
 

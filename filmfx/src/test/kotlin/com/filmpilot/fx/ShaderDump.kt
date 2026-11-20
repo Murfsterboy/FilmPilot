@@ -48,7 +48,19 @@ class ShaderDump {
                 .append("\"invHalfDiagonal\":${u.invHalfDiagonal},\"vignetteAmount\":${u.vignetteAmount},")
                 .append("\"grainAmount\":${u.grainAmount},\"invGrainSize\":${u.invGrainSize},\"grainOffset\":[${u.grainOffsetX},${u.grainOffsetY}]}")
         }
+        json.append("},\"lensCases\":{")
+        val lenses = mapOf(
+            "wide" to LensParams(0.06f, 0.0015f, 0.1f),
+            "toy" to LensParams(0.09f, 0.004f, 0.6f),
+            "tele" to LensParams(-0.012f, 0.0004f, 0f),
+        )
+        lenses.entries.forEachIndexed { i, (name, l) ->
+            File(dir, "expected-lens-$name.rgba").writeBytes(toRgba(LensOptics.process(src, w, h, l)))
+            if (i > 0) json.append(',')
+            json.append("\"$name\":{\"distortion\":${l.distortion},\"chromatic\":${l.chromatic},\"blur\":${l.blur}}")
+        }
         json.append("}}")
+        File(dir, "lens.frag").writeText(LensShaderSource.DEVELOP_FRAGMENT)
         File(dir, "uniforms.json").writeText(json.toString())
     }
 

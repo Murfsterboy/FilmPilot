@@ -6,14 +6,20 @@ import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.filmpilot.app.camera.DevelopRequest
 import com.filmpilot.app.camera.FilmDeveloper
+import com.filmpilot.app.film.CameraBody
 import com.filmpilot.app.film.CameraState
 import com.filmpilot.app.film.FilmSettingsStore
 import com.filmpilot.app.film.FilmStock
+import com.filmpilot.app.film.Gear
+import com.filmpilot.app.film.Lens
 import com.filmpilot.app.film.LutCatalog
 import com.filmpilot.app.gl.GpuDeveloper
 import com.filmpilot.fx.FilmParams
+import com.filmpilot.fx.LensParams
 import com.filmpilot.fx.Lut3D
+import java.util.Date
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,8 +45,14 @@ data class UiState(
     val lastPhotoUri: Uri? = null,
     val message: String? = null,
 ) {
+    val body: CameraBody get() = camera.body
+    val lens: Lens get() = camera.lens
+
     /** True while another frame can be shot on this roll. */
-    val canShoot get() = camera.shotsTaken + capturing < CameraState.ROLL_SIZE
+    val canShoot get() = camera.shotsTaken + capturing < camera.rollSize
+
+    /** Film vignette plus the lens's own optical vignetting. */
+    private val totalVignette get() = (camera.vignette + lens.vignette).coerceIn(0f, 1f)
 
     /** What the live viewfinder should show, or null for the plain camera preview. */
     val liveParams: FilmParams?
@@ -48,8 +60,19 @@ data class UiState(
             lut = lut,
             exposureEv = camera.exposureEv,
             grain = camera.grain,
-            vignette = camera.vignette,
+            vignette = totalVignette,
         )
+
+    /** Lens optics for the live viewfinder (none when the live preview is off). */
+    val liveLens: LensParams get() = if (liveParams == null) LensParams.NONE else lens.optics
+
+    fun developParams(lut: Lut3D?) = FilmParams(
+        lut = lut,
+        exposureEv = camera.exposureEv,
+        grain = camera.grain,
+        vignette = totalVignette,
+        grainSeed = Random.nextInt(),
+    )
 }
 
 class CameraViewModel(app: Application) : AndroidViewModel(app) {
@@ -63,6 +86,12 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     @OptIn(ExperimentalCoroutinesApi::class)
     private val darkroom = Dispatchers.Default.limitedParallelism(1)
 
+    /** First half of a half-frame pair, waiting for its partner. Only touched in [darkroom]. */
+    private var pendingHalf: Bitmap? = null
+    private var pendingHalfRoll = 0
+    /** Bumped on every new roll, so a half from the previous roll never pairs with the next. */
+    @Volatile private var rollNumber = 0
+
     private val _state = MutableStateFlow(
         store.load().let { cam ->
             val film = catalog.stock(cam.filmId)
@@ -70,6 +99,13 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         }
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
+
+    /**
+     * Light meter: how the metered frame will be exposed relative to mid-grey, in stops,
+     * before exposure compensation. Null until the first reading (or if metering isn't available).
+     */
+    private val _meter = MutableStateFlow<Float?>(null)
+    val meter: StateFlow<Float?> = _meter.asStateFlow()
 
     init {
         loadLut(_state.value.film.id)
@@ -83,6 +119,11 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 .getOrNull()
             _state.update { if (it.film.id == filmId) it.copy(lut = lut) else it }
         }
+    }
+
+    /** Called by the meter analyser (any thread), smoothed so the needle moves like a real one. */
+    fun onMeterReading(stops: Float) {
+        _meter.update { old -> if (old == null) stops else old + (stops - old) * 0.35f }
     }
 
     /** Reserve a frame before asking the camera for a picture. Returns false if the roll is full. */
@@ -104,18 +145,21 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(camera = frame, capturing = it.capturing - 1, developing = it.developing + 1) }
 
         val filmId = s.film.id
-        val cam = s.camera
+        val body = s.body
+        val roll = rollNumber
+        val dateStamp = if (s.camera.dateStamp) Date() else null
         viewModelScope.launch(darkroom) {
             try {
-                val params = FilmParams(
-                    lut = catalog.load(filmId),
-                    exposureEv = cam.exposureEv,
-                    grain = cam.grain,
-                    vignette = cam.vignette,
-                    grainSeed = Random.nextInt(),
+                val request = DevelopRequest(
+                    film = s.developParams(catalog.load(filmId)),
+                    lens = s.lens.optics,
+                    format = body.format,
+                    dateStamp = dateStamp,
+                    keepForPair = body.halfFramePairs,
                 )
-                val photo = developer.develop(jpeg, rotationDegrees, params)
+                val photo = developer.develop(jpeg, rotationDegrees, request)
                 _state.update { it.copy(lastPhoto = photo.thumbnail, lastPhotoUri = photo.uri) }
+                photo.pairHalf?.let { pairUp(it, roll) }
             } catch (t: Throwable) {
                 Log.e(TAG, "Developing failed", t)
                 _state.update { it.copy(message = "Couldn't save photo: ${t.message}") }
@@ -125,13 +169,48 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Load a fresh roll of [filmId] (or the current film): counter back to 0. */
-    fun loadNewRoll(filmId: String = _state.value.film.id) {
+    /** Half-frame: every second frame is also saved next to the one before it. */
+    private suspend fun pairUp(half: Bitmap, roll: Int) {
+        val first = pendingHalf
+        if (first == null || pendingHalfRoll != roll) {
+            first?.recycle()
+            pendingHalf = half
+            pendingHalfRoll = roll
+            return
+        }
+        pendingHalf = null
+        try {
+            developer.savePair(first, half)
+            Log.i(TAG, "Saved half-frame pair")
+        } finally {
+            first.recycle()
+            half.recycle()
+        }
+    }
+
+    /**
+     * Load a fresh roll: counter back to 0. Optionally with another film or body
+     * (both mean rewinding, like a real camera).
+     */
+    fun loadNewRoll(filmId: String = _state.value.film.id, bodyId: String = _state.value.camera.bodyId) {
         val film = catalog.stock(filmId)
-        updateCamera { it.copy(filmId = film.id, shotsTaken = 0) }
+        val body = Gear.body(bodyId)
+        rollNumber++
+        updateCamera {
+            val bodyChanged = it.bodyId != body.id
+            it.copy(
+                filmId = film.id, shotsTaken = 0, bodyId = body.id,
+                dateStamp = if (bodyChanged) body.dateStampByDefault else it.dateStamp,
+            )
+        }
         _state.update { it.copy(film = film, lut = if (it.film.id == film.id) it.lut else null) }
         loadLut(film.id)
     }
+
+    /** Lenses can be swapped mid-roll. */
+    fun selectLens(lensId: String) = updateCamera { it.copy(lensId = Gear.lens(lensId).id) }
+
+    fun setDateStamp(on: Boolean) = updateCamera { it.copy(dateStamp = on) }
 
     fun setExposure(ev: Float) = updateCamera {
         it.copy(exposureEv = ev.coerceIn(FilmParams.MIN_EV, FilmParams.MAX_EV))

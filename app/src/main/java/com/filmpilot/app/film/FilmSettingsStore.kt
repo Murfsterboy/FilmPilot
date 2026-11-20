@@ -11,12 +11,18 @@ data class CameraState(
     val vignette: Float,
     /** Show the film look live in the viewfinder (GPU). */
     val livePreview: Boolean = true,
+    val bodyId: String = Gear.defaultBody.id,
+    val lensId: String = Gear.defaultLens.id,
+    /** Date imprint in the corner of each frame. */
+    val dateStamp: Boolean = false,
 ) {
-    val shotsLeft get() = ROLL_SIZE - shotsTaken
-    val rollFinished get() = shotsTaken >= ROLL_SIZE
+    val body get() = Gear.body(bodyId)
+    val lens get() = Gear.lens(lensId)
+    val rollSize get() = body.exposures
+    val shotsLeft get() = rollSize - shotsTaken
+    val rollFinished get() = shotsTaken >= rollSize
 
     companion object {
-        const val ROLL_SIZE = 24
         const val DEFAULT_EV = 0f
         const val DEFAULT_GRAIN = 0.35f
         const val DEFAULT_VIGNETTE = 0.3f
@@ -27,14 +33,20 @@ data class CameraState(
 class FilmSettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences("filmpilot", Context.MODE_PRIVATE)
 
-    fun load() = CameraState(
+    fun load(): CameraState {
+        val body = Gear.body(prefs.getString(K_BODY, null))
+        return CameraState(
         filmId = prefs.getString(K_FILM, null),
-        shotsTaken = prefs.getInt(K_SHOTS, 0).coerceIn(0, CameraState.ROLL_SIZE),
+        shotsTaken = prefs.getInt(K_SHOTS, 0).coerceIn(0, body.exposures),
         exposureEv = prefs.getFloat(K_EV, CameraState.DEFAULT_EV),
         grain = prefs.getFloat(K_GRAIN, CameraState.DEFAULT_GRAIN),
         vignette = prefs.getFloat(K_VIGNETTE, CameraState.DEFAULT_VIGNETTE),
         livePreview = prefs.getBoolean(K_LIVE, true),
-    )
+        bodyId = body.id,
+        lensId = Gear.lens(prefs.getString(K_LENS, null)).id,
+        dateStamp = prefs.getBoolean(K_DATE, body.dateStampByDefault),
+        )
+    }
 
     fun save(s: CameraState) {
         prefs.edit()
@@ -44,6 +56,9 @@ class FilmSettingsStore(context: Context) {
             .putFloat(K_GRAIN, s.grain)
             .putFloat(K_VIGNETTE, s.vignette)
             .putBoolean(K_LIVE, s.livePreview)
+            .putString(K_BODY, s.bodyId)
+            .putString(K_LENS, s.lensId)
+            .putBoolean(K_DATE, s.dateStamp)
             .apply()
     }
 
@@ -54,5 +69,8 @@ class FilmSettingsStore(context: Context) {
         const val K_GRAIN = "grain"
         const val K_VIGNETTE = "vignette"
         const val K_LIVE = "live_preview"
+        const val K_BODY = "body_id"
+        const val K_LENS = "lens_id"
+        const val K_DATE = "date_stamp"
     }
 }

@@ -5,6 +5,33 @@ vignette and exposure compensation, saved to `Pictures/FilmPilot`.
 
 Kotlin + Jetpack Compose + CameraX, min SDK 26 (Android 8.0).
 
+## Phase 3: camera bodies, lenses, light meter
+
+- **Bodies** (Body card): each sets the frame format, roll length, casing colours and extras.
+  Changing body rewinds the roll.
+
+  | Body | Format | Roll | Extras |
+  |---|---|---|---|
+  | Pilot 35 | 3:2 | 24 | |
+  | Pilot Half | half-frame 4:3 | 48 | every two frames also saved side by side (`_pair.jpg`) |
+  | Pilot Six | square 6×6 | 12 | |
+  | Pilot Wide | panoramic 65:24 | 21 | |
+  | Pilot Snap | 3:2 | 24 | date imprint on by default |
+
+  The viewfinder shows frame lines for the format; photos are cropped to it and follow how you
+  hold the phone (portrait or landscape).
+- **Lenses** (Lens card): 21, 28, 35, 50, 90 mm and a plastic toy lens. Focal length drives the
+  camera's real zoom (relative to the phone's main lens; 21 mm needs an ultra-wide camera). Each
+  lens adds its own barrel/pincushion distortion, colour fringing, soft corners and vignetting,
+  live in the viewfinder and on the photo. Lenses swap mid-roll.
+- **Light meter** along the top of the viewfinder: centre-weighted, −2…+2 stops in ⅓ stops. The
+  amber needle shows how the photo will be exposed (reading + compensation). Drag the scale to set
+  exposure compensation, double-tap to reset.
+- **Date imprint** (DATE on the top plate): the orange '26 11 20 stamp, exposed under the film look.
+- Add a body or lens by adding an entry to `film/Gear.kt`.
+- Lens optics: `filmfx/LensOptics.kt` (CPU reference) and `LensShaderSource.kt` (GPU, shared by the
+  live preview and developing), checked against each other by `GpuMatchTest`.
+
 ## Phase 2: live film viewfinder
 
 - The viewfinder shows the film look live: stock, exposure, vignette and grain, with grain that

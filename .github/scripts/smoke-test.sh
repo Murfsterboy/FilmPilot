@@ -44,6 +44,15 @@ tap_desc() {
   nums=($(echo "$node" | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+'))
   adb shell input tap $(( (nums[0] + nums[2]) / 2 )) $(( (nums[1] + nums[3]) / 2 ))
 }
+# Tap the centre of the first UI node whose text is exactly $1.
+tap_text() {
+  dump
+  local node nums
+  node=$(grep -o "<node [^>]*text=\"$1\"[^>]*>" "$OUT/ui.xml" | head -1)
+  [ -z "$node" ] && { echo "no node with text '$1'"; diagnose "looking for text $1"; return 1; }
+  nums=($(echo "$node" | grep -o 'bounds="[^"]*"' | grep -o '[0-9]\+'))
+  adb shell input tap $(( (nums[0] + nums[2]) / 2 )) $(( (nums[1] + nums[3]) / 2 ))
+}
 photo_count() {
   adb shell ls /sdcard/Pictures/FilmPilot 2>/dev/null | tr -d '\r' | grep -c '\.jpg$' || true
 }
@@ -106,6 +115,45 @@ dump
 grep -q "3 of 24 shots taken" "$OUT/ui.xml" || fail "counter should survive a restart"
 shot 05-restarted
 check_crash "restart"
+
+step "Light meter shows a reading"
+dump
+METER=$(grep -o 'content-desc="Light meter: [^"]*"' "$OUT/ui.xml" | head -1)
+echo "$METER"
+[ -n "$METER" ] || fail "light meter not found"
+echo "$METER" | grep -q "no reading yet" && fail "light meter has no reading"
+
+step "Swap to the toy lens"
+tap_desc "Lens:" || fail "lens card not found"
+sleep 2; shot 06-lens-picker
+tap_desc "Toy 38mm" || fail "toy lens not in the picker"
+sleep 3; shot 07-toy-lens
+check_crash "lens swap"
+
+step "Switch to the square body (rewinds the roll)"
+tap_desc "Body:" || fail "body card not found"
+sleep 2; shot 08-body-picker
+tap_desc "Pilot Six" || fail "square body not in the picker"
+sleep 2
+tap_text "Load new roll" || fail "rewind confirmation not shown"
+sleep 3; shot 09-square-body
+dump
+grep -q "0 of 12 shots taken" "$OUT/ui.xml" || fail "square body should start a 12-exposure roll"
+
+step "Shoot a square frame with the toy lens"
+BEFORE=$(photo_count)
+adb logcat -c
+tap_desc "Shutter" || fail "shutter button not found"
+for _ in $(seq 1 15); do [ "$(( $(photo_count) - BEFORE ))" -ge 1 ] && break; sleep 3; done
+adb logcat -d -s FilmPilot | grep -E "Developed|Saved|Lens" | tee "$OUT/square-log.txt"
+SAVED=$(grep -o 'Saved [0-9]*x[0-9]*' "$OUT/square-log.txt" | tail -1)
+W=$(echo "$SAVED" | sed 's/Saved \([0-9]*\)x.*/\1/'); H=$(echo "$SAVED" | sed 's/.*x//')
+[ -n "$W" ] && [ "$W" = "$H" ] || fail "square body should save a square photo (got '$SAVED')"
+grep -q ' on GPU ' "$OUT/square-log.txt" || fail "square frame should be developed on the GPU"
+NAME=$(adb shell ls -t /sdcard/Pictures/FilmPilot 2>/dev/null | tr -d '\r' | grep '\.jpg$' | head -1)
+[ -n "$NAME" ] && adb pull "/sdcard/Pictures/FilmPilot/$NAME" "$OUT/square-toy-$NAME" >/dev/null 2>&1
+shot 10-after-square
+check_crash "square shot"
 
 adb logcat -d > "$OUT/logcat.txt" 2>/dev/null || true
 echo

@@ -14,12 +14,15 @@ import androidx.camera.core.SurfaceProcessor
 import androidx.camera.core.SurfaceRequest
 import com.filmpilot.fx.FilmParams
 import com.filmpilot.fx.FilmUniforms
+import com.filmpilot.fx.LensParams
+import com.filmpilot.fx.LensShaderSource
 import java.util.concurrent.Executor
 
 /**
  * Live film viewfinder. CameraX sends camera frames here (through [FilmPreviewEffect]);
  * each frame is drawn twice on the GPU:
- *  1. camera texture (external OES) → RGBA texture, applying CameraX's crop/rotation transform;
+ *  1. camera texture (external OES) → RGBA texture, applying CameraX's crop/rotation transform
+ *     and the lens optics;
  *  2. film shader → the preview output surface.
  *
  * Everything runs on a dedicated GL thread, which is also the executor CameraX calls us on.
@@ -31,11 +34,12 @@ class FilmSurfaceProcessor(private val onError: (Throwable) -> Unit) : SurfacePr
     val executor = Executor { handler.post(it) }
 
     @Volatile var params: FilmParams = FilmParams(grain = 0f, vignette = 0f)
+    @Volatile var lens: LensParams = LensParams.NONE
 
     private lateinit var egl: EglCore
     private lateinit var pbuffer: EGLSurface
     private lateinit var film: FilmRenderer
-    private lateinit var copy: CameraCopyProgram
+    private lateinit var copy: CameraLensProgram
     private lateinit var target: GlUtil.RenderTarget
     private var cameraTexture = 0
     private var initError: Throwable? = null
@@ -56,7 +60,7 @@ class FilmSurfaceProcessor(private val onError: (Throwable) -> Unit) : SurfacePr
                 pbuffer = egl.createPbufferSurface()
                 egl.makeCurrent(pbuffer)
                 film = FilmRenderer()
-                copy = CameraCopyProgram()
+                copy = CameraLensProgram()
                 target = GlUtil.RenderTarget()
                 cameraTexture = GlUtil.texture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES30.GL_LINEAR)
                 GlUtil.checkError("live init")
@@ -100,6 +104,7 @@ class FilmSurfaceProcessor(private val onError: (Throwable) -> Unit) : SurfacePr
             st.updateTexImage()
             st.getTransformMatrix(stMatrix)
             val p = params.copy(grainSeed = frames++) // grain dances frame to frame, like film
+            val l = lens
             for ((out, eglSurface) in outputs) {
                 egl.makeCurrent(eglSurface)
                 out.updateTransformMatrix(texMatrix, stMatrix)
@@ -108,7 +113,7 @@ class FilmSurfaceProcessor(private val onError: (Throwable) -> Unit) : SurfacePr
 
                 target.resize(w, h)
                 target.bind()
-                copy.draw(cameraTexture, texMatrix)
+                copy.draw(cameraTexture, texMatrix, w, h, l)
 
                 GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
                 GLES30.glViewport(0, 0, w, h)
@@ -157,35 +162,31 @@ class FilmSurfaceProcessor(private val onError: (Throwable) -> Unit) : SurfacePr
 class FilmPreviewEffect(processor: FilmSurfaceProcessor, onError: (Throwable) -> Unit) :
     CameraEffect(CameraEffect.PREVIEW, processor.executor, processor, { onError(it) })
 
-/** Copies the camera's external texture into a regular texture, applying CameraX's transform. */
-private class CameraCopyProgram {
-    private val program = GlUtil.program(
-        """
-        attribute vec4 aPosition;
-        attribute vec4 aTexCoord;
-        uniform mat4 uTexMatrix;
-        varying vec2 vTex;
-        void main() { gl_Position = aPosition; vTex = (uTexMatrix * aTexCoord).xy; }
-        """.trimIndent(),
-        """
-        #extension GL_OES_EGL_image_external : require
-        precision mediump float;
-        uniform samplerExternalOES uCamera;
-        varying vec2 vTex;
-        void main() { gl_FragColor = texture2D(uCamera, vTex); }
-        """.trimIndent(),
-    )
+/**
+ * Pass 1 of the live viewfinder: camera frame (external OES texture) → RGBA texture, applying
+ * CameraX's crop/rotation transform and the lens optics ([LensShaderSource.PREVIEW_FRAGMENT]).
+ */
+private class CameraLensProgram {
+    private val program = GlUtil.program(LensShaderSource.PREVIEW_VERTEX, LensShaderSource.PREVIEW_FRAGMENT)
     private val aPosition = GLES30.glGetAttribLocation(program, "aPosition")
     private val aTexCoord = GLES30.glGetAttribLocation(program, "aTexCoord")
     private val uTexMatrix = GLES30.glGetUniformLocation(program, "uTexMatrix")
     private val uCamera = GLES30.glGetUniformLocation(program, "uCamera")
+    private val uOutSize = GLES30.glGetUniformLocation(program, "uOutSize")
+    private val uDistortion = GLES30.glGetUniformLocation(program, "uDistortion")
+    private val uChromatic = GLES30.glGetUniformLocation(program, "uChromatic")
+    private val uBlur = GLES30.glGetUniformLocation(program, "uBlur")
 
-    fun draw(cameraTexture: Int, texMatrix: FloatArray) {
+    fun draw(cameraTexture: Int, texMatrix: FloatArray, width: Int, height: Int, lens: LensParams) {
         GLES30.glUseProgram(program)
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
         GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, cameraTexture)
         GLES30.glUniform1i(uCamera, 0)
         GLES30.glUniformMatrix4fv(uTexMatrix, 1, false, texMatrix, 0)
+        GLES30.glUniform2f(uOutSize, width.toFloat(), height.toFloat())
+        GLES30.glUniform1f(uDistortion, lens.distortion)
+        GLES30.glUniform1f(uChromatic, lens.chromatic)
+        GLES30.glUniform1f(uBlur, lens.blur)
         GLES30.glEnableVertexAttribArray(aPosition)
         GLES30.glVertexAttribPointer(aPosition, 2, GLES30.GL_FLOAT, false, 0, GlUtil.QUAD)
         GLES30.glEnableVertexAttribArray(aTexCoord)
